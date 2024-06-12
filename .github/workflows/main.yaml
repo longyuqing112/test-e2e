@@ -1,0 +1,68 @@
+
+name: Continuous Integration
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main-repo
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libxi6 libgconf-2-4
+          cd ${{ github.workspace }}/main-repo
+          pip install -r requirements.txt
+
+      - name: Checkout compose repository
+        uses: actions/checkout@v4
+        with:
+          repository: "openimsdk/openim-docker"
+          path: "compose-repo"
+
+      - name: Get Internal IP Address
+        id: get-ip
+        run: |
+          IP=$(hostname -I | awk '{print $1}')
+          echo "The IP Address is: $IP"
+          echo "::set-output name=ip::$IP"
+
+      - name: Start services using Docker Compose
+        run: |
+          cd ${{ github.workspace }}/compose-repo
+          sed -i 's|MINIO_EXTERNAL_ADDRESS=.*|MINIO_EXTERNAL_ADDRESS=http://${{ steps.get-ip.outputs.ip }}:10005|' ${{ github.workspace }}/compose-repo/.env
+          cat .env
+          docker compose up -d
+          sleep 60
+
+      - name: Run tests with Xvfb and generate Allure results
+        run: |
+          cd ${{ github.workspace }}/main-repo
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' pytest -v -s ./script --alluredir=./reports/allure-results
+
+      - name: Upload Allure results to Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: allure-results
+          path: ${{ github.workspace }}/main-repo/reports/allure-results
+
+      # Optional: Serve Allure report
+      - name: Serve Allure report
+        uses: simple-elf/allure-report-action@v1.9
+        with:
+          results_directory: ${{ github.workspace }}/main-repo/reports/allure-results
+          allure_version: '2.13.9'  # Specify Allure version if needed
+
+
